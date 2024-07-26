@@ -1,0 +1,93 @@
+import numpy as np
+import cv2
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
+from tensorflow.keras.optimizers import Adam
+from sklearn.model_selection import train_test_split
+import pandas as pd
+import os
+
+data_dir = 'path_to_your_food_data_directory'
+img_height, img_width = 128, 128
+batch_size = 32
+epochs = 10
+
+data = pd.read_csv('path_to_your_labels_file.csv')
+images = data['image_file']
+calories = data['calories']
+
+train_images, val_images, train_calories, val_calories = train_test_split(images, calories, test_size=0.2, random_state=42)
+
+def preprocess_image(image_path):
+    img = cv2.imread(image_path)
+    img = cv2.resize(img, (img_height, img_width))
+    img = img / 255.0
+    return img
+
+def load_data(image_paths, calorie_values):
+    X = np.array([preprocess_image(os.path.join(data_dir, img)) for img in image_paths])
+    y = np.array(calorie_values)
+    return X, y
+
+X_train, y_train = load_data(train_images, train_calories)
+X_val, y_val = load_data(val_images, val_calories)
+
+model_classify = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=(img_height, img_width, 3)),
+    MaxPooling2D((2, 2)),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Flatten(),
+    Dense(512, activation='relu'),
+    Dense(256, activation='relu')
+])
+
+model_calories = Sequential([
+    Dense(256, activation='relu', input_shape=(256,)),
+    Dense(1)
+])
+
+combined_input = tf.keras.Input(shape=(img_height, img_width, 3))
+x = model_classify(combined_input)
+calories_output = model_calories(x)
+
+model = tf.keras.Model(inputs=combined_input, outputs=calories_output)
+
+model.compile(optimizer=Adam(), loss='mean_squared_error')
+
+history = model.fit(
+    X_train, y_train,
+    epochs=epochs,
+    validation_data=(X_val, y_val)
+)
+
+model.save('food_calorie_estimation_model.h5')
+
+model = load_model('food_calorie_estimation_model.h5')
+cap = cv2.VideoCapture(0)
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    img = cv2.resize(frame, (img_height, img_width))
+    img = np.expand_dims(img, axis=0)
+    img = img / 255.0
+
+    calorie_prediction = model.predict(img)
+    calorie_text = f'Estimated Calories: {calorie_prediction[0][0]:.2f}'
+
+    cv2.putText(frame, calorie_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA)
+
+    cv2.imshow('Food Calorie Estimation', frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
